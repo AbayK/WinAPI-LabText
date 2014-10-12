@@ -1,0 +1,375 @@
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+LRESULT CALLBACK WindowProcedure(HWND, UINT, WPARAM, LPARAM);
+
+static const char szClassName[] = "WC_T1";
+
+
+static struct {
+    int vSPos;
+    int hSPos;
+
+    int fW;
+    int fH;
+
+    SCROLLINFO hSInfo;
+    SCROLLINFO vSInfo;
+
+    int modeFlag;
+
+} s_wInfo;
+
+static struct {
+    char *buffer;
+    size_t size;
+    int rows;
+    int maxLen;
+    char **ptr;
+} s_text;
+
+void PrepareInfo(HWND hwnd, LPARAM lParam)
+{
+    HDC hDC;
+    TEXTMETRIC txtMetric;
+    PAINTSTRUCT paintStr;
+    HFONT hfont;
+    FILE *FIN;
+    CREATESTRUCT *pSTR;
+    int i, j, pi;
+
+    pSTR = (CREATESTRUCT *)(lParam);
+
+    FIN = fopen((char *)pSTR->lpCreateParams, "rt");
+    if (FIN == NULL)
+        return;
+
+    fseek(FIN, 0, SEEK_END);
+    s_text.size = ftell(FIN);
+    fseek(FIN, 0, SEEK_SET);
+
+    s_text.buffer = (char *)calloc(s_text.size, sizeof(char));
+    fread(s_text.buffer, s_text.size, sizeof(char), FIN);
+    fclose(FIN);
+    
+    
+    
+    hDC = BeginPaint(hwnd, &paintStr);
+
+    hfont = (HFONT)GetStockObject(ANSI_FIXED_FONT);
+    SelectObject(hDC, hfont);
+    
+    GetTextMetrics(hDC, &txtMetric);
+    s_wInfo.fH = txtMetric.tmHeight;
+    s_wInfo.fW = txtMetric.tmAveCharWidth;
+    EndPaint(hwnd, &paintStr);
+
+    s_text.rows = 1;
+    s_text.maxLen = 0;
+    for (i = 0; i < s_text.size; ++i) {
+        if (s_text.buffer[i] == '\n')
+            ++s_text.rows;
+    }
+    s_text.ptr = (char **)calloc(s_text.rows + 1, sizeof(char *));
+    for (i = 0, pi = 0, j = 0; i < s_text.size; ++i) {
+        if (s_text.buffer[i] == '\n') {
+            s_text.ptr[j++] = &s_text.buffer[pi];
+            if (i - pi > s_text.maxLen)
+                s_text.maxLen = i - pi;
+            pi = i + 1;
+        }
+    }
+    s_text.ptr[j] = &s_text.buffer[pi];
+    ++j;
+    s_text.ptr[j] = &s_text.buffer[i];
+
+
+    s_wInfo.hSInfo.cbSize = sizeof(s_wInfo.hSInfo);
+    s_wInfo.hSInfo.fMask = SIF_POS | SIF_PAGE | SIF_RANGE;
+    s_wInfo.hSInfo.nMin = 0;
+
+
+    s_wInfo.vSInfo.cbSize = sizeof(s_wInfo.vSInfo);
+    s_wInfo.vSInfo.fMask = SIF_POS | SIF_PAGE | SIF_RANGE | SIF_DISABLENOSCROLL;
+    s_wInfo.vSInfo.nMin = 0;
+    
+
+    s_wInfo.modeFlag = TRUE;
+}
+
+
+int WINAPI WinMain(HINSTANCE hThisInstance,
+                   HINSTANCE hPrevInstance,
+                   LPSTR lpszArgument,
+                   int nCmdShow)
+{
+    HWND hwnd;
+    MSG messages;
+    WNDCLASSEX wincl;
+
+    wincl.hInstance = hThisInstance;
+    wincl.lpszClassName = szClassName;
+    wincl.lpfnWndProc = WindowProcedure;
+    wincl.style = CS_DBLCLKS | CS_CLASSDC | CS_HREDRAW | CS_VREDRAW;
+    wincl.cbSize = sizeof (WNDCLASSEX);
+
+    wincl.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wincl.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
+    wincl.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wincl.lpszMenuName = NULL;
+    wincl.cbClsExtra = 0;
+    wincl.cbWndExtra = 0;
+    wincl.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
+
+    if (!RegisterClassEx(&wincl))
+        return 0;
+
+    hwnd = CreateWindowEx(
+        0,
+        szClassName,
+        "Code::Blocks Template Windows App",
+        WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        HWND_DESKTOP,
+        NULL,
+        hThisInstance,
+        lpszArgument
+        );
+
+    ShowWindow(hwnd, nCmdShow);
+
+    while (GetMessage(&messages, NULL, 0, 0)) {
+        TranslateMessage(&messages);
+        DispatchMessage(&messages);
+    }
+
+    return messages.wParam;
+}
+
+void ScrollLeft(HWND hwnd)
+{
+    if (s_wInfo.hSPos > 0) {
+        --s_wInfo.hSPos;
+        SetScrollPos(hwnd, SB_HORZ, s_wInfo.hSPos, TRUE);
+        InvalidateRect(hwnd, NULL, TRUE);
+    }
+}
+
+void ScrollRight(HWND hwnd)
+{
+    if (s_wInfo.hSPos <= s_wInfo.hSInfo.nMax - (int)s_wInfo.hSInfo.nPage) {
+        ++s_wInfo.hSPos;
+        SetScrollPos(hwnd, SB_HORZ, s_wInfo.hSPos, TRUE);
+        InvalidateRect(hwnd, NULL, TRUE);
+    }
+}
+
+void ScrollUp(HWND hwnd)
+{
+    if (s_wInfo.vSPos > 0) {
+        --s_wInfo.vSPos;
+        SetScrollPos(hwnd, SB_VERT, s_wInfo.vSPos, TRUE);
+        InvalidateRect(hwnd, NULL, TRUE);
+    }
+}
+
+void ScrollDown(HWND hwnd)
+{
+    if (s_wInfo.vSPos <= s_wInfo.vSInfo.nMax - (int)s_wInfo.vSInfo.nPage) {
+        ++s_wInfo.vSPos;
+        SetScrollPos(hwnd, SB_VERT, s_wInfo.vSPos, TRUE);
+        InvalidateRect(hwnd, NULL, TRUE);
+    }
+}
+
+void PageUp(HWND hwnd)
+{
+    RECT rect;
+    int  width, heigth;
+    int  nPageLines;
+
+    GetClientRect(hwnd, &rect);
+    width = rect.right - rect.left;
+    heigth = rect.bottom - rect.top;
+    nPageLines = heigth / s_wInfo.fH;
+
+    while (nPageLines > 0) {
+        ScrollUp(hwnd);
+        --nPageLines;
+    }
+}
+
+void PageDown(HWND hwnd)
+{
+    RECT rect;
+    int  width, heigth;
+    int  nPageLines;
+
+    GetClientRect(hwnd, &rect);
+    width = rect.right - rect.left;
+    heigth = rect.bottom - rect.top;
+    nPageLines = heigth / s_wInfo.fH;
+
+    while (nPageLines > 0) {
+        ScrollDown(hwnd);
+        --nPageLines;
+    }
+}
+
+
+//************************************
+// Returns:   LRESULT CALLBACK
+// Parameter: HWND hwnd
+// Parameter: UINT message
+// Parameter: WPARAM wParam
+// Parameter: LPARAM lParam
+// Throws:    none
+//************************************
+LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    HDC hDC;
+    PAINTSTRUCT paintStr;
+    RECT rect;
+    int i;
+    int iFirstLine;
+    int iLastLine;
+    int n;
+
+    switch (message) {
+    case WM_CREATE:
+        PrepareInfo(hwnd, lParam);
+        return 0;
+        break;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        if (s_text.buffer)
+            free(s_text.buffer);
+        free(s_text.ptr);
+        break;
+    case WM_PAINT:
+        hDC = BeginPaint(hwnd, &paintStr);
+        if (s_wInfo.modeFlag) {
+            if (s_text.buffer == NULL)
+                break;
+            iFirstLine = s_wInfo.vSPos;
+            iLastLine = iFirstLine + s_wInfo.vSInfo.nPage < s_text.rows ? iFirstLine + s_wInfo.vSInfo.nPage : s_text.rows;
+            for (i = iFirstLine; i < iLastLine; ++i)
+            if (s_text.ptr[i + 1] - s_text.ptr[i] - s_wInfo.hSPos > 0)
+                TextOut(hDC, TA_LEFT, (i - iFirstLine) * s_wInfo.fH, &s_text.ptr[i][s_wInfo.hSPos], s_text.ptr[i + 1] - s_text.ptr[i] - s_wInfo.hSPos);
+        } else {
+            int y1, y2;
+            char *ptr;
+            for (int i = y1, j = 0; i < y2; ++i) {
+                n = 0;
+                for (i = 0; i < s_wInfo.vSPos; ++i) {
+                    n += (s_text.ptr[i + 1] - s_text.ptr[i]) / s_wInfo.vSInfo.nPage
+                       + (s_text.ptr[i + 1] - s_text.ptr[i]) % s_wInfo.vSInfo.nPage != 0 ? 1 : 0;
+                }
+            }
+        }
+
+        EndPaint(hwnd, &paintStr);
+        break;
+    case WM_VSCROLL:
+        switch (LOWORD(wParam)) {
+        case SB_LINEUP:
+            ScrollUp(hwnd);
+            break;
+        case SB_LINEDOWN:
+            ScrollDown(hwnd);
+            break;
+        case SB_THUMBTRACK:
+            s_wInfo.vSPos = HIWORD(wParam);
+            SetScrollPos(hwnd, SB_VERT, s_wInfo.vSPos, TRUE);
+            InvalidateRect(hwnd, NULL, TRUE);
+        default:
+            break;
+        }
+        break;
+    case WM_HSCROLL:
+        switch (LOWORD(wParam)) {
+        case SB_LINEUP:
+            ScrollLeft(hwnd);
+            break;
+        case SB_LINEDOWN:
+            ScrollRight(hwnd);
+            break;
+        case SB_THUMBTRACK:
+            s_wInfo.hSPos = HIWORD(wParam);
+            SetScrollPos(hwnd, SB_HORZ, s_wInfo.hSPos, TRUE);
+            InvalidateRect(hwnd, NULL, TRUE);
+        default:
+            break;
+        }
+        break;
+    case WM_KEYDOWN:
+        switch (wParam) {
+        case VK_LEFT:
+            ScrollLeft(hwnd);
+            break;
+        case VK_RIGHT:
+            ScrollRight(hwnd);
+            break;
+        case VK_UP:
+            ScrollUp(hwnd);
+            break;
+        case VK_DOWN:
+            ScrollDown(hwnd);
+            break;
+        case VK_PRIOR:
+            PageUp(hwnd);
+            break;
+        case VK_NEXT:
+            PageDown(hwnd);
+            break;
+        default:
+            break;
+        }
+        break;
+    case WM_MOUSEWHEEL:
+        if (GET_WHEEL_DELTA_WPARAM(wParam) > 0)
+            ScrollUp(hwnd);
+        else
+            ScrollDown(hwnd);
+        break;
+    case WM_SIZE:
+        GetClientRect(hwnd, &rect);
+        if (s_wInfo.modeFlag) {
+            s_wInfo.hSInfo.nPos = s_wInfo.hSPos;
+            s_wInfo.hSInfo.nPage = (rect.right - rect.left) / s_wInfo.fW;
+            s_wInfo.hSInfo.nMax = s_text.maxLen;
+
+            s_wInfo.vSInfo.nPos = s_wInfo.vSPos;
+            s_wInfo.vSInfo.nPage = (rect.bottom - rect.top) / s_wInfo.fH;
+            s_wInfo.vSInfo.nMax = s_text.rows;
+        } else {
+            n = 0;
+            for (i = 0; i < s_text.size; ++i) {
+                n += (s_text.ptr[i + 1] - s_text.ptr[i]) / s_wInfo.vSInfo.nPage
+                   + (s_text.ptr[i + 1] - s_text.ptr[i]) % s_wInfo.vSInfo.nPage != 0 ? 1 : 0;
+            }
+            s_wInfo.hSInfo.nPos = s_wInfo.hSPos = 0;
+            s_wInfo.hSInfo.nPage = 0;
+            s_wInfo.hSInfo.nMax = 0;
+
+            s_wInfo.vSInfo.nPos = s_wInfo.vSPos;
+            s_wInfo.vSInfo.nPage = (rect.bottom - rect.top) / s_wInfo.fH;
+            s_wInfo.vSInfo.nMax = n;
+        }
+
+        SetScrollInfo(hwnd, SB_HORZ, &s_wInfo.hSInfo, TRUE);
+        SetScrollInfo(hwnd, SB_VERT, &s_wInfo.vSInfo, TRUE);
+        s_wInfo.hSPos = GetScrollPos(hwnd, SB_HORZ);
+        s_wInfo.vSPos = GetScrollPos(hwnd, SB_VERT);
+
+    default:
+        return DefWindowProc(hwnd, message, wParam, lParam);
+    }
+
+    return 0;
+}
